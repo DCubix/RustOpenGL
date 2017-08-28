@@ -1,0 +1,8 @@
+[package]
+name = "rustopengl"
+version = "0.1.0"
+authors = ["DCubix <diego95lopes@live.com>"]
+
+[dependencies]
+sdl2 = "0.30.0"
+gl = "*"
