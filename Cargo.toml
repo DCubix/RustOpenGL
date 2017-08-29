@@ -7,3 +7,5 @@ authors = ["DCubix <diego95lopes@live.com>"]
 sdl2 = "0.30.0"
 gl = "*"
 rand = "0.3"
+stb_image = "0.2.2"
+num = "0.1.25"

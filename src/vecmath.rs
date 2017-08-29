@@ -83,6 +83,18 @@ impl Vec3 {
 		Vec3 { x: x, y: y, z: z }
 	}
 
+	pub fn unproject(&self, viewport: Vec4, wheight: f32, invpv: Mat4) -> Vec3 {
+		let mut x = self.x;
+		let mut y = self.y;
+		x = x - viewport.x;
+		y = wheight - y - 1.0;
+		y = y - viewport.y;
+		let sx = (2.0 * x) / viewport.z - 1.0;
+		let sy = (2.0 * y) / viewport.w - 1.0;
+		let sz = 2.0 * self.z - 1.0;
+		(invpv * Vec4::new(sx, sy, sz, 1.0)).to_vec3()
+	}
+
 	pub fn zero() -> Vec3 { Vec3::new(0.0, 0.0, 0.0) }
 
 	pub fn from_slice(s: &[f32]) -> Vec3 {
@@ -235,6 +247,13 @@ impl Neg for Vec4 {
 #[derive(Debug, Clone)]
 pub struct Mat4 { rows: [Vec4; 4] }
 
+impl Index<usize> for Mat4 {
+	type Output = Vec4;
+	fn index(&self, i: usize) -> &Vec4 {
+		&self.rows[i]
+	}
+}
+
 impl Mat4 {
 	pub fn new(m: &[f32; 16]) -> Mat4 {
 		Mat4 {
@@ -245,6 +264,10 @@ impl Mat4 {
 				Vec4::from_slice(&m[12..16])
 			]
 		}
+	}
+
+	pub fn from_rows(r0: Vec4, r1: Vec4, r2: Vec4, r3: Vec4) -> Mat4 {
+		Mat4 { rows: [ r0, r1, r2, r3 ] }
 	}
 
 	pub fn identity() -> Mat4 {
@@ -334,6 +357,59 @@ impl Mat4 {
 		])
 	}
 
+	pub fn inverted(&self) -> Mat4 {
+		let m = self.clone();
+
+		let coef00 = m[2][2] * m[3][3] - m[3][2] * m[2][3];
+		let coef02 = m[1][2] * m[3][3] - m[3][2] * m[1][3];
+		let coef03 = m[1][2] * m[2][3] - m[2][2] * m[1][3];
+		let coef04 = m[2][1] * m[3][3] - m[3][1] * m[2][3];
+		let coef06 = m[1][1] * m[3][3] - m[3][1] * m[1][3];
+		let coef07 = m[1][1] * m[2][3] - m[2][1] * m[1][3];
+		let coef08 = m[2][1] * m[3][2] - m[3][1] * m[2][2];
+		let coef10 = m[1][1] * m[3][2] - m[3][1] * m[1][2];
+		let coef11 = m[1][1] * m[2][2] - m[2][1] * m[1][2];
+		let coef12 = m[2][0] * m[3][3] - m[3][0] * m[2][3];
+		let coef14 = m[1][0] * m[3][3] - m[3][0] * m[1][3];
+		let coef15 = m[1][0] * m[2][3] - m[2][0] * m[1][3];
+		let coef16 = m[2][0] * m[3][2] - m[3][0] * m[2][2];
+		let coef18 = m[1][0] * m[3][2] - m[3][0] * m[1][2];
+		let coef19 = m[1][0] * m[2][2] - m[2][0] * m[1][2];
+		let coef20 = m[2][0] * m[3][1] - m[3][0] * m[2][1];
+		let coef22 = m[1][0] * m[3][1] - m[3][0] * m[1][1];
+		let coef23 = m[1][0] * m[2][1] - m[2][0] * m[1][1];
+
+		let fac0 = Vec4::new(coef00, coef00, coef02, coef03);
+		let fac1 = Vec4::new(coef04, coef04, coef06, coef07);
+		let fac2 = Vec4::new(coef08, coef08, coef10, coef11);
+		let fac3 = Vec4::new(coef12, coef12, coef14, coef15);
+		let fac4 = Vec4::new(coef16, coef16, coef18, coef19);
+		let fac5 = Vec4::new(coef20, coef20, coef22, coef23);
+
+		let vec0 = Vec4::new(m[1][0], m[0][0], m[0][0], m[0][0]);
+		let vec1 = Vec4::new(m[1][1], m[0][1], m[0][1], m[0][1]);
+		let vec2 = Vec4::new(m[1][2], m[0][2], m[0][2], m[0][2]);
+		let vec3 = Vec4::new(m[1][3], m[0][3], m[0][3], m[0][3]);
+
+		let inv0 = vec1 * fac0 - vec2 * fac1 + vec3 * fac2;
+		let inv1 = vec0 * fac0 - vec2 * fac3 + vec3 * fac4;
+		let inv2 = vec0 * fac1 - vec1 * fac3 + vec3 * fac5;
+		let inv3 = vec0 * fac2 - vec1 * fac4 + vec2 * fac5;
+
+		let signA = Vec4::new(1.0, -1.0, 1.0, -1.0);
+		let signB = Vec4::new(-1.0, 1.0, -1.0, 1.0);
+	 	let inverse = Mat4::from_rows(inv0 * signA, inv1 * signB, inv2 * signA, inv3 * signB);
+
+		let row0 = Vec4::new(inverse[0][0], inverse[1][0], inverse[2][0], inverse[3][0]);
+
+		let dot0 = m[0] * row0;
+		let dot1 = (dot0[0] + dot0[1]) + (dot0[2] + dot0[3]);
+
+		let oneOverDeterminant = 1.0f32 / dot1;
+
+		inverse * oneOverDeterminant
+	}
+
 	pub fn ortho(l: f32, r: f32, b: f32, t: f32, n: f32, f: f32) -> Mat4 {
 		let w = r - l;
 		let h = t - b;
@@ -370,6 +446,15 @@ impl Mat4 {
 			 z.x,  z.y,  z.z, -eye.dot(z),
 			 0.0,  0.0,  0.0, 1.0
 		])
+	}
+
+	pub fn det(&self) -> f32 {
+		  self.rows[0].x * self.rows[1].y * self.rows[2].z * self.rows[3].w - self.rows[0].x * self.rows[1].y * self.rows[2].w * self.rows[3].z + self.rows[0].x * self.rows[1].z * self.rows[2].w * self.rows[3].y - self.rows[0].x * self.rows[1].z * self.rows[2].y * self.rows[3].w
+		+ self.rows[0].x * self.rows[1].w * self.rows[2].y * self.rows[3].z - self.rows[0].x * self.rows[1].w * self.rows[2].z * self.rows[3].y - self.rows[0].y * self.rows[1].z * self.rows[2].w * self.rows[3].x + self.rows[0].y * self.rows[1].z * self.rows[2].x * self.rows[3].w
+		- self.rows[0].y * self.rows[1].w * self.rows[2].x * self.rows[3].z + self.rows[0].y * self.rows[1].w * self.rows[2].z * self.rows[3].x - self.rows[0].y * self.rows[1].x * self.rows[2].z * self.rows[3].w + self.rows[0].y * self.rows[1].x * self.rows[2].w * self.rows[3].z
+		+ self.rows[0].z * self.rows[1].w * self.rows[2].x * self.rows[3].y - self.rows[0].z * self.rows[1].w * self.rows[2].y * self.rows[3].x + self.rows[0].z * self.rows[1].x * self.rows[2].y * self.rows[3].w - self.rows[0].z * self.rows[1].x * self.rows[2].w * self.rows[3].y
+		+ self.rows[0].z * self.rows[1].y * self.rows[2].w * self.rows[3].x - self.rows[0].z * self.rows[1].y * self.rows[2].x * self.rows[3].w - self.rows[0].w * self.rows[1].x * self.rows[2].y * self.rows[3].z + self.rows[0].w * self.rows[1].x * self.rows[2].z * self.rows[3].y
+		- self.rows[0].w * self.rows[1].y * self.rows[2].z * self.rows[3].x + self.rows[0].w * self.rows[1].y * self.rows[2].x * self.rows[3].z - self.rows[0].w * self.rows[1].z * self.rows[2].x * self.rows[3].y + self.rows[0].w * self.rows[1].z * self.rows[2].y * self.rows[3].x
 	}
 
 	pub fn as_ptr(&self) -> *const f32 {
@@ -414,6 +499,18 @@ impl Mul<Vec3> for Mat4 {
 			self.rows[0].dot(v),
 			self.rows[1].dot(v),
 			self.rows[2].dot(v)
+		)
+	}
+}
+
+impl Mul<f32> for Mat4 {
+	type Output = Mat4;
+	fn mul(self, rhs: f32) -> Mat4 {
+		Mat4::from_rows(
+			self.rows[0] * rhs,
+			self.rows[1] * rhs,
+			self.rows[2] * rhs,
+			self.rows[3] * rhs
 		)
 	}
 }

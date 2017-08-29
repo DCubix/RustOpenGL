@@ -1,26 +1,30 @@
 extern crate sdl2;
 extern crate gl;
-extern crate rand;
-use rand::distributions::Range;
 
 mod vecmath;
 mod renderer;
+mod logic;
 mod primitives;
-use renderer::*;
 
-use vecmath::*;
+mod game;
+use game::*;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::mouse::MouseButton;
 
 fn main() {
 	let sdl = sdl2::init().unwrap();
 	let video = sdl.video().unwrap();
+	let mut time = sdl.timer().unwrap();
 
 	let gl_attr = video.gl_attr();
+	
 	gl_attr.set_context_profile(sdl2::video::GLProfile::Core);
 	gl_attr.set_context_flags().debug().set();
 	gl_attr.set_context_version(3, 3);
+	// gl_attr.set_multisample_buffers(1);
+	// gl_attr.set_multisample_samples(8);
 
 	let window = video.window("Test", 800, 600)
 		.opengl()
@@ -34,101 +38,58 @@ fn main() {
 
 	let mut event_pump = sdl.event_pump().unwrap();
 
-	let vs = "
-		#version 330\n
-		layout (location = 0) in vec3 v_pos;\n
-		layout (location = 1) in vec3 v_nrm;\n
-		layout (location = 2) in vec2 v_uv;\n
-		layout (location = 3) in mat4 v_imodel;\n
-		out DATA {\n
-			vec3 position;\n
-			vec3 normal;\n
-			vec2 uv;\n
-		} vs_out;\n
-		uniform mat4 projection;\n
-		uniform mat4 model;\n
-		uniform mat4 view;\n
-		void main() {\n
-			vec4 pos = v_imodel * vec4(v_pos, 1.0);
-			gl_Position = projection * view * pos;\n
-			mat3 nmat = mat3(transpose(inverse(v_imodel)));\n
-			vs_out.position = pos.xyz;\n
-			vs_out.normal = nmat * v_nrm;\n
-			vs_out.uv = v_uv;\n
-		}
-	";
-	let fs = "
-		#version 330\n
-		out vec4 fragColor;\n
-		in DATA {\n
-			vec3 position;\n
-			vec3 normal;\n
-			vec2 uv;\n
-		} fs_in;\n
-		const vec3 lightDir = vec3(-1.0, -1.0, 1.0);\n
-		const vec3 ambient = vec3(0.12, 0.12, 0.2);\n
-		void main() {\n
-			vec3 N = normalize(fs_in.normal);\n
-
-			float nl = max(dot(N, -lightDir), 0.0);\n
-			vec3 diff = vec3(nl * 0.75) + ambient;\n
-			fragColor = vec4(diff, 1.0);\n
-		}\n
-	";
-	let mut shd = Shader::new();
-	shd.add_shader(vs, gl::VERTEX_SHADER);
-	shd.add_shader(fs, gl::FRAGMENT_SHADER);
-	shd.link();
-
-	let mut model = primitives::make_cube();
-
-	let mut ren = Renderer::new();
-	
 	let sz = window.size();
 	let w = sz.0 as f32;
 	let h = sz.1 as f32;
-	let aspect = w / h;
-	let scale = 2f32;
 
-	let d = (1.0_f32 / 3.0_f32).sqrt();
-	//let proj = Mat4::ortho(-scale * aspect, scale * aspect, scale, -scale, -scale, scale);
-	let proj = Mat4::perspective(60.0f32.to_radians(), aspect, 0.01f32, 1000f32);
-	//let view = Mat4::rotation_x(32.264f32.to_radians()) * Mat4::rotation_y(-45f32.to_radians());
-	let view = Mat4::translation(Vec3::new(0.0, 0.0, -3.0));
+	let mut game = Game::new();
+	game.on_init(w, h);
 
-	let mut transforms = Vec::new();
-	for i in 0..20 {
-		let m = Mat4::translation(Vec3::new(
-			rand::random::<f32>() * 4.0,
-			rand::random::<f32>() * 4.0,
-			rand::random::<f32>() * 4.0
-		));
-		transforms.push(m);
-	}
+	let timeStep = 1.0f32 / 60.0;
+	let mut startTime = 0f32;
+	let mut accum = 0f32;
+	let mut button_down = false;
+	let mut mouse_button = MouseButton::Left;
 
 	'running: loop {
-		for event in event_pump.poll_iter() {
-			match event {
-				Event::Quit {..} => {
-					break 'running
-				},
-				_ => {}
+		let current = time.ticks() as f32 / 1000.0;
+		let delta = current - startTime;
+		startTime = current;
+		accum += delta;
+
+		while accum >= timeStep {
+			accum -= timeStep;
+
+			for event in event_pump.poll_iter() {
+				match event {
+					Event::Quit {..} => {
+						break 'running
+					},
+					Event::MouseButtonDown { mouse_btn, x, y, .. } => {
+						mouse_button = mouse_btn;
+						game.on_mouse_click(mouse_btn, x as f32, y as f32);
+						button_down = true;
+					},
+					Event::MouseButtonUp { mouse_btn, .. } => {
+						game.on_mouse_release(mouse_btn);
+						button_down = false;
+					},
+					Event::MouseMotion { x, y, .. } => {
+						game.on_mouse_move(x as f32, y as f32);
+						if button_down {
+							game.on_mouse_drag(mouse_button, x as f32, y as f32);
+						}
+					}
+					_ => {}
+				}
 			}
+
+			game.on_update(timeStep);
 		}
 
-		GL!(ClearColor(0.1_f32, 0.08_f32, 0.2_f32, 1.0_f32));
-		GL!(Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT));
-
-		shd.bind();
-		shd.get("projection").unwrap().set(proj.clone());
-		shd.get("view").unwrap().set(view.clone());
-		// shd.get("model").unwrap().set(Mat4::identity());
-
-		ren.render_instanced(&model, transforms.as_slice());
-
-		shd.unbind();
+		game.on_render(w, h);
 		
 		window.gl_swap_window();
 	}
-	model.free();
+
 }
