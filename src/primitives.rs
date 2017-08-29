@@ -63,5 +63,5 @@ pub fn make_cube() -> Model {
 		VertexAttribute::new(2, false)
 	];
 
-	Model::from(verts.as_slice(), &inds, &fmt)
+	Model::from(verts.as_slice(), &inds, &fmt, true)
 }

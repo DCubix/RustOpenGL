@@ -195,7 +195,7 @@ pub struct Model {
 }
 
 impl Model {
-	pub fn new(fmt: &[VertexAttribute]) -> Model {
+	pub fn new(fmt: &[VertexAttribute], instanced: bool) -> Model {
 		let mut vao = 0;
 		let mut vbo = 0;
 		let mut ibo = 0;
@@ -212,6 +212,7 @@ impl Model {
 		}
 		
 		let mut off = 0i32;
+		let mut last = 0u32;
 		for (i, attr) in fmt.iter().cloned().enumerate() {
 			GL!(EnableVertexAttribArray(i as u32));
 			GL!(VertexAttribPointer(
@@ -223,6 +224,24 @@ impl Model {
 				off as *const _
 			));
 			off += attr.comps * mem::size_of::<f32>() as i32;
+			last = i as u32;
+		}
+		
+		if instanced {
+			let sz = mem::size_of::<Mat4>();
+			GL!(EnableVertexAttribArray(last + 1));
+			GL!(VertexAttribPointer(last + 1, 4, gl::FLOAT,	gl::FALSE, sz as _,	0 as *const _));
+			GL!(EnableVertexAttribArray(last + 2));
+			GL!(VertexAttribPointer(last + 2, 4, gl::FLOAT,	gl::FALSE, sz as _,	12 as *const _));
+			GL!(EnableVertexAttribArray(last + 3));
+			GL!(VertexAttribPointer(last + 3, 4, gl::FLOAT,	gl::FALSE, sz as _,	24 as *const _));
+			GL!(EnableVertexAttribArray(last + 4));
+			GL!(VertexAttribPointer(last + 4, 4, gl::FLOAT,	gl::FALSE, sz as _,	36 as *const _));
+
+			GL!(VertexAttribDivisor(last + 1, 1));
+			GL!(VertexAttribDivisor(last + 2, 1));
+			GL!(VertexAttribDivisor(last + 3, 1));
+			GL!(VertexAttribDivisor(last + 4, 1));
 		}
 
 		GL!(BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo));
@@ -240,15 +259,15 @@ impl Model {
 		}
 	}
 
-	pub fn from(vertices: &[f32], indices: &[u16], fmt: &[VertexAttribute]) -> Model {
-		let mut m = Model::new(fmt);
+	pub fn from(vertices: &[f32], indices: &[u16], fmt: &[VertexAttribute], instanced: bool) -> Model {
+		let mut m = Model::new(fmt, instanced);
 		m.add_data(vertices, indices);
 		m.flush();
 		m
 	}
 
 	pub fn concat(a: Model, b: Model, fmt: &[VertexAttribute]) -> Model {
-		let mut m = Model::new(fmt);
+		let mut m = Model::new(fmt, false);
 		let mut verts = Vec::new();
 		let mut inds = Vec::new();
 		verts.extend(a.vertices.clone());
@@ -314,6 +333,18 @@ impl Model {
 		GL!(BindVertexArray(0));
 	}
 
+	pub fn draw_instanced(&self, prim: GLenum, amount: i32) {
+		GL!(BindVertexArray(self.vao));
+		GL!(DrawElementsInstanced(
+			prim,
+			self.prevIBO as i32,
+			gl::UNSIGNED_SHORT,
+			0 as *const _,
+			amount
+		));
+		GL!(BindVertexArray(0));
+	}
+
 	pub fn free(&mut self) {
 		if self.vbo > 0 {
 			GL!(DeleteBuffers(1, &mut self.vbo));
@@ -330,27 +361,40 @@ struct TModel {
 }
 
 pub struct Renderer {
-	models: Vec<TModel>
+	instance_mats: u32
 }
 
 impl Renderer {
 	pub fn new() -> Renderer {
+		let mut instance_mats = 0;
+		let max_instances = 100000;
+
+		GL!(GenBuffers(1, &mut instance_mats));
+		GL!(BindBuffer(gl::ARRAY_BUFFER, instance_mats));
+		GL!(BufferData(gl::ARRAY_BUFFER, (max_instances * mem::size_of::<Mat4>()) as _, ptr::null(), gl::DYNAMIC_DRAW));
+		GL!(BindBuffer(gl::ARRAY_BUFFER, 0));
+
 		GL!(Enable(gl::DEPTH_TEST));
 		GL!(Enable(gl::CULL_FACE));
 		GL!(FrontFace(gl::CCW));
+
 		Renderer {
-			models: Vec::new()
+			instance_mats: instance_mats
 		}
 	}
 
-	pub fn submit(&mut self, model: &Model) {
-		self.models.push(TModel { model: model.clone(), transform: Mat4::identity() });
+	pub fn render(&self, model: &Model) {
+		model.draw(gl::TRIANGLES);
 	}
 
-	pub fn render(&mut self) {
-		for tmodel in self.models.iter().cloned() {
-			tmodel.model.draw(gl::TRIANGLES);
-		}
-		self.models.clear();
+	pub fn render_instanced(&self, model: &Model, transforms: &[Mat4]) {
+		let sz = transforms.len() * mem::size_of::<Mat4>();
+
+		GL!(BindBuffer(gl::ARRAY_BUFFER, self.instance_mats));
+		GL!(BufferSubData(gl::ARRAY_BUFFER, 0, sz as _, transforms.as_ptr() as *const _));
+		
+		model.draw_instanced(gl::TRIANGLES, transforms.len() as i32);
+
+		GL!(BindBuffer(gl::ARRAY_BUFFER, 0));
 	}
 }

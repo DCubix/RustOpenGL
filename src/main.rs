@@ -1,5 +1,7 @@
 extern crate sdl2;
 extern crate gl;
+extern crate rand;
+use rand::distributions::Range;
 
 mod vecmath;
 mod renderer;
@@ -37,6 +39,7 @@ fn main() {
 		layout (location = 0) in vec3 v_pos;\n
 		layout (location = 1) in vec3 v_nrm;\n
 		layout (location = 2) in vec2 v_uv;\n
+		layout (location = 3) in mat4 v_imodel;\n
 		out DATA {\n
 			vec3 position;\n
 			vec3 normal;\n
@@ -46,9 +49,9 @@ fn main() {
 		uniform mat4 model;\n
 		uniform mat4 view;\n
 		void main() {\n
-			vec4 pos = model * vec4(v_pos, 1.0);
+			vec4 pos = v_imodel * vec4(v_pos, 1.0);
 			gl_Position = projection * view * pos;\n
-			mat3 nmat = mat3(transpose(inverse(model)));\n
+			mat3 nmat = mat3(transpose(inverse(v_imodel)));\n
 			vs_out.position = pos.xyz;\n
 			vs_out.normal = nmat * v_nrm;\n
 			vs_out.uv = v_uv;\n
@@ -88,10 +91,20 @@ fn main() {
 	let scale = 2f32;
 
 	let d = (1.0_f32 / 3.0_f32).sqrt();
-	let proj = Mat4::ortho(-scale * aspect, scale * aspect, scale, -scale, -scale, scale);
-	// let proj = Mat4::perspective(60.0f32.to_radians(), aspect, 0.01f32, 1000f32);
-	let view = Mat4::rotation_x(32.264f32.to_radians()) * Mat4::rotation_y(-45f32.to_radians());
-	// let view = Mat4::translation(Vec3::new(-2.0, -1.0, -3.0));
+	//let proj = Mat4::ortho(-scale * aspect, scale * aspect, scale, -scale, -scale, scale);
+	let proj = Mat4::perspective(60.0f32.to_radians(), aspect, 0.01f32, 1000f32);
+	//let view = Mat4::rotation_x(32.264f32.to_radians()) * Mat4::rotation_y(-45f32.to_radians());
+	let view = Mat4::translation(Vec3::new(0.0, 0.0, -3.0));
+
+	let mut transforms = Vec::new();
+	for i in 0..20 {
+		let m = Mat4::translation(Vec3::new(
+			rand::random::<f32>() * 4.0,
+			rand::random::<f32>() * 4.0,
+			rand::random::<f32>() * 4.0
+		));
+		transforms.push(m);
+	}
 
 	'running: loop {
 		for event in event_pump.poll_iter() {
@@ -106,14 +119,12 @@ fn main() {
 		GL!(ClearColor(0.1_f32, 0.08_f32, 0.2_f32, 1.0_f32));
 		GL!(Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT));
 
-		ren.submit(&model);
-
 		shd.bind();
 		shd.get("projection").unwrap().set(proj.clone());
 		shd.get("view").unwrap().set(view.clone());
-		shd.get("model").unwrap().set(Mat4::identity());
+		// shd.get("model").unwrap().set(Mat4::identity());
 
-		ren.render();
+		ren.render_instanced(&model, transforms.as_slice());
 
 		shd.unbind();
 		

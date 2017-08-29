@@ -6,3 +6,4 @@ authors = ["DCubix <diego95lopes@live.com>"]
 [dependencies]
 sdl2 = "0.30.0"
 gl = "*"
+rand = "0.3"
