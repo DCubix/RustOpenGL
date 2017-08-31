@@ -26,5 +26,7 @@ void main() {
 	vec4 col = vec4(1.0);
 	if (!disableTexture) { col = texture(texture0, fs_in.uv); }
 
+	// float d = gl_FragCoord.z * 100.0;
 	fragColor = vec4(diff * color.rgb, 1.0) * col;
+	// fragColor = vec4(vec3(d), 1.0);
 }

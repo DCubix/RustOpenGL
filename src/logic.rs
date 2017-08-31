@@ -1,8 +1,6 @@
 extern crate rand;
 extern crate num;
 use std::cmp::{ min, max };
-use std::collections::VecDeque;
-use std::collections::HashMap;
 use self::rand::{ thread_rng, Rng };
 
 pub struct Map {
@@ -14,28 +12,19 @@ pub struct Map {
 
 impl Map {
 	pub fn new(width: i32, height: i32) -> Map {
-		let mut m = Vec::new();
-		let mut b = Vec::new();
-		m.resize((width * height) as usize, 11i32);
-		b.resize((width * height) as usize, 0u8);
-		Map {
-			map: m,
-			bits: b,
-			width: width,
-			height: height
-		}
+		let mut map = Vec::new();
+		let mut bits = Vec::new();
+		map.resize((width * height) as usize, 11i32);
+		bits.resize((width * height) as usize, 0u8);
+		Map { map, bits, width, height }
 	}
 
 	fn lim_x(&self, x: i32) -> i32 {
-		if x < 0 { return self.width + x; }
-		if x >= self.width { return x - self.width; }
-		x
+		min(self.width-1, max(x, 0))
 	}
 
 	fn lim_y(&self, y: i32) -> i32 {
-		if y < 0 { return self.height + y; }
-		if y >= self.height { return y - self.height; }
-		y
+		min(self.height-1, max(y, 0))
 	}
 
 	pub fn solve(&mut self) {
@@ -48,7 +37,7 @@ impl Map {
 	}
 
 	pub fn valid(&self, x: i32, y: i32) -> bool {
-		!(x < 0 || x >= self.width || y < 0 || y >= self.height)
+		x >= 0 && x < self.width && y >= 0 && y < self.height
 	}
 
 	fn get_neighbors(&self, x: i32, y: i32) -> Vec<(i32, i32, u8)> {
@@ -56,11 +45,11 @@ impl Map {
 		if self.valid(x-1, y) {
 			vec.push((x-1, y, self.get_bit(x-1, y)));
 		}
-		if self.valid(x+1, y) {
-			vec.push((x+1, y, self.get_bit(x+1, y)));
-		}
 		if self.valid(x, y-1) {
 			vec.push((x, y-1, self.get_bit(x, y-1)));
+		}
+		if self.valid(x+1, y) {
+			vec.push((x+1, y, self.get_bit(x+1, y)));
 		}
 		if self.valid(x, y+1) {
 			vec.push((x, y+1, self.get_bit(x, y+1)));
@@ -125,18 +114,17 @@ impl Map {
 	}
 
 	pub fn get_random_road_point(&self) -> (i32, i32) {
-		let mut seen: Vec<bool> = Vec::new();
-		seen.resize((self.width * self.height) as usize, false);
-
 		let mut rng = thread_rng();
 		let mut x: i32 = rng.gen_range(0, self.width-1);
 		let mut y: i32 = rng.gen_range(0, self.height-1);
 
-		while self.get_bit(x, y) == 0 {
+		let mut bit = self.get_bit(x, y);
+		while bit == 0 {
 			x = rng.gen_range(0, self.width-1);
 			y = rng.gen_range(0, self.height-1);
+			bit = self.get_bit(x, y);
+			// println!("CHECKED: X={}, Y={} => {}", x, y, bit);
 		}
-		println!("{:?} : {:?}", (self.width-1, self.height-1), (x, y));
 		(x, y)
 	}
 
@@ -154,33 +142,30 @@ impl Map {
 			}
 
 			let (cx, cy) = path[path.len().wrapping_sub(1)];
-			seen[(cx + self.width * cy) as usize] = true;
+			seen[(cx + cy * self.width) as usize] = true;
+			
+			c += 1;
 
 			let neighs = self.get_neighbors(cx, cy);
 			let mut i = 0;
 			for &(x, y, val) in neighs.iter() {
-				i += 1;
-
-				if val == 0 {
-					continue;
-				}
 				if x == ex && y == ey {
 					path.push((x, y));
 					return path;
 				}
-				if seen[(x + self.width * y) as usize] {
-					continue;
+				if !seen[(x + y * self.width) as usize] && val == 1 {
+					path.push((x, y));
+					break;
+				} else {
+					i += 1;
 				}
-				
-				path.push((x, y));
-				break;
 			}
 
 			if i == neighs.len() {
 				path.pop();
 			}
-			c += 1;
 		}
+
 	}
 
 	pub fn width(&self) -> i32 { self.width }

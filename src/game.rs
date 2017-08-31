@@ -1,24 +1,34 @@
 extern crate sdl2;
 extern crate gl;
+extern crate rand;
 use std::mem;
 use sdl2::mouse::MouseButton;
 use sdl2::keyboard::Keycode;
 use std::path::Path;
 use std::f32::consts::PI;
+use self::rand::{ thread_rng, Rng };
 
 use primitives;
 use vecmath::*;
 use renderer::*;
 use logic::*;
 
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+	(1.0 - t) * a + b * t
+}
+
 #[derive(Debug, Clone)]
 struct Car {
 	pub pos: Vec2,
 	pub dir: Vec2,
+	pub rot: f32,
 	speed: f32,
 	waypoints: Vec<Vec2>,
 	current_way: usize,
-	stopped: bool
+	stopped: bool,
+	start_x: i32,
+	start_y: i32,
+	color: Vec3
 }
 
 impl Car {
@@ -30,14 +40,34 @@ impl Car {
 						   .into_iter()
 						   .map(|i| Vec2::new(i.0 as f32 + 0.5, i.1 as f32 + 0.5))
 						   .collect();
+		let mut rng = thread_rng();
 		Car {
 			pos: Vec2::new(sx as f32 + 0.5, sy as f32 + 0.5),
 			dir: Vec2::new(0.0, 0.0),
 			speed: 1.5,
 			waypoints: waypoints,
 			current_way: 0,
-			stopped: false
+			stopped: false,
+			start_x: sx,
+			start_y: sy,
+			rot: 0.0,
+			color: Vec3::new(
+				rng.gen_range(0.5f32, 1.0f32),
+				rng.gen_range(0.5f32, 1.0f32),
+				rng.gen_range(0.5f32, 1.0f32)
+			)
 		}
+	}
+
+	pub fn set_destination(&mut self, x: i32, y: i32, map: &Map) {
+		if map.get_bit(x, y) == 0 { return; }
+
+		let path = map.find_path(self.start_x, self.start_y, x, y);
+
+		self.waypoints = path.into_iter()
+							.map(|i| Vec2::new(i.0 as f32 + 0.5, i.1 as f32 + 0.5))
+							.collect();
+		self.current_way = 0;
 	}
 
 	fn refresh(&mut self, map: &Map) {
@@ -45,8 +75,10 @@ impl Car {
 		let mut ly = 0;
 		if self.waypoints.len() > 0 {
 			let last_w = self.current_waypoint();
-			lx = (last_w.x - 0.5) as i32;
-			ly = (last_w.y - 0.5) as i32;
+			lx = (last_w.x - 0.5).floor() as i32;
+			ly = (last_w.y - 0.5).floor() as i32;
+			self.start_x = lx;
+			self.start_y = ly;
 		} else {
 			let (x, y) = map.get_random_road_point();
 			lx = x; ly = y;
@@ -73,46 +105,46 @@ impl Car {
 
 	pub fn render(&self, shader: &mut Shader, car_tex: &Texture, cursor_tex: &Texture, car: &Model, model: &Model) {
 		car_tex.bind(0);
-		shader.get("color").unwrap().set(Vec4::new(1.0, 1.0, 1.0, 1.0));
-		let rot = Mat4::rotation_y(self.dir.y.atan2(self.dir.x) + PI/2.0);
+		shader.get("color").unwrap().set(Vec4::new(self.color.x, self.color.y, self.color.z, 1.0));
+		let rot = Mat4::rotation_y(self.rot);
 		shader.get("model").unwrap().set(
 			Mat4::translation(Vec3::new(self.pos.x, 0.0, self.pos.y)) * rot
 		);
 		car.draw(gl::TRIANGLES);
 
-		// Draw first
-		cursor_tex.bind(0);
-		shader.get("color").unwrap().set(Vec4::new(1.0, 0.5, 0.0, 1.0));
-		let f = self.waypoints[0];
-		shader.get("model").unwrap().set(
-			Mat4::translation(Vec3::new(f.x-0.5, 0.0, f.y-0.5))
-		);
-		GL!(Disable(gl::DEPTH_TEST));
-		model.draw(gl::TRIANGLES);
-		GL!(Enable(gl::DEPTH_TEST));
+		// // Draw first
+		// cursor_tex.bind(0);
+		// shader.get("color").unwrap().set(Vec4::new(1.0, 0.5, 0.0, 1.0));
+		// let f = self.waypoints[0];
+		// shader.get("model").unwrap().set(
+		// 	Mat4::translation(Vec3::new(f.x-0.5, 0.0, f.y-0.5))
+		// );
+		// GL!(Disable(gl::DEPTH_TEST));
+		// model.draw(gl::TRIANGLES);
+		// GL!(Enable(gl::DEPTH_TEST));
 
-		if self.waypoints.len() > 2 {
-			shader.get("color").unwrap().set(Vec4::new(1.0, 1.0, 1.0, 1.0));
-			for i in 1..self.waypoints.len()-1 {
-				let w = self.waypoints[i];
-				shader.get("model").unwrap().set(
-					Mat4::translation(Vec3::new(w.x-0.5, 0.0, w.y-0.5))
-				);
-				GL!(Disable(gl::DEPTH_TEST));
-				model.draw(gl::TRIANGLES);
-				GL!(Enable(gl::DEPTH_TEST));
-			}
-		}
+		// if self.waypoints.len() > 2 {
+		// 	shader.get("color").unwrap().set(Vec4::new(1.0, 1.0, 1.0, 1.0));
+		// 	for i in 1..self.waypoints.len()-1 {
+		// 		let w = self.waypoints[i];
+		// 		shader.get("model").unwrap().set(
+		// 			Mat4::translation(Vec3::new(w.x-0.5, 0.0, w.y-0.5))
+		// 		);
+		// 		GL!(Disable(gl::DEPTH_TEST));
+		// 		model.draw(gl::TRIANGLES);
+		// 		GL!(Enable(gl::DEPTH_TEST));
+		// 	}
+		// }
 
-		// Draw last
-		shader.get("color").unwrap().set(Vec4::new(0.0, 1.0, 0.0, 1.0));
-		let l = self.last_waypoint();
-		shader.get("model").unwrap().set(
-			Mat4::translation(Vec3::new(l.x-0.5, 0.0, l.y-0.5))
-		);
-		GL!(Disable(gl::DEPTH_TEST));
-		model.draw(gl::TRIANGLES);
-		GL!(Enable(gl::DEPTH_TEST));
+		// // Draw last
+		// shader.get("color").unwrap().set(Vec4::new(0.0, 1.0, 0.0, 1.0));
+		// let l = self.last_waypoint();
+		// shader.get("model").unwrap().set(
+		// 	Mat4::translation(Vec3::new(l.x-0.5, 0.0, l.y-0.5))
+		// );
+		// GL!(Disable(gl::DEPTH_TEST));
+		// model.draw(gl::TRIANGLES);
+		// GL!(Enable(gl::DEPTH_TEST));
 	}
 
 	pub fn update(&mut self, dt: f32, map: &Map) {
@@ -123,6 +155,13 @@ impl Car {
 		let v = w - self.pos;
 
 		self.dir = v.normalized();
+
+		let nrot = self.dir.y.atan2(self.dir.x) + PI/2.0;
+		let theta = nrot - self.rot;
+		if theta > PI { self.rot += 2.0*PI; }
+		else if theta < -PI { self.rot -= 2.0*PI; }
+		self.rot += theta * dt * 10.0;
+
 		self.pos = self.pos + (self.dir * self.speed) * dt;
 
 		let dist = v.length();
@@ -209,7 +248,7 @@ impl Game {
 			house_tex: Texture::new(Path::new("res/house_tex.png")),
 			car: Model::from_file(Path::new("res/car.obj"), true).unwrap(),
 			car_tex: Texture::new(Path::new("res/car_tex.png")),
-			dmap: Map::new(24, 24),
+			dmap: Map::new(16, 16),
 			proj: Mat4::identity(),
 			view: Mat4::identity(),
 			camera: Mat4::identity(),
@@ -236,7 +275,7 @@ impl Game {
 		self.proj = Mat4::ortho(-scale * aspect, scale * aspect, scale, -scale, -scale*10.0, scale*10.0);
 		// self.proj = Mat4::perspective(45f32.to_radians(), aspect, 0.01, 1000.0);
 		self.view = Mat4::rotation_x(self.ax) * Mat4::rotation_y(self.ay);
-		// self.view = Mat4::rotation_x((PI/2.0).to_radians());
+		// self.view = Mat4::translation(Vec3::new(-4.0, 0.0, -12.0)) * Mat4::rotation_x(PI/4.0);
 		self.view = self.view.clone() * Mat4::scaling(Vec3::new(1.0, -1.0, 1.0));
 		// self.view = Mat4::translation(Vec3::new(1.0, -0.25, -4.0));
 	}
@@ -246,6 +285,10 @@ impl Game {
 		self.mouse_prev_pos.y = y;
 		match button {
 			MouseButton::Left => {
+				// if self.cars.len() > 0 {
+				// 	self.cars[0].set_destination(self.cursor_x, self.cursor_y, &self.dmap);
+				// }
+
 				if self.dmap.get_bit(self.cursor_x, self.cursor_y) == 0 {
 					self.dmap.set_bit(self.cursor_x, self.cursor_y, 1);
 					self.dmap.solve();
@@ -345,18 +388,19 @@ impl Game {
 		let mut z = 0.0f32;
 		GL!(ReadPixels(
 			self.mouse_pos.x as i32,
-			self.mouse_pos.y as i32,
+			(h-self.mouse_pos.y) as i32,
 			1, 1,
 			gl::DEPTH_COMPONENT,
 			gl::FLOAT,
 			mem::transmute(&mut z)
 		));
 		
-		let mut cur_pos = self.mouse_pos.extend(1.0 - z).unproject(
+		let mut cur_pos = self.mouse_pos.extend(z).unproject(
 			Vec4::new(0.0, 0.0, w, h),
 			viewmat.clone(),
 			self.proj.clone()
 		);
+
 		cur_pos.x = cur_pos.x.floor();
 		cur_pos.z = cur_pos.z.floor();
 		cur_pos.y = 0.0;

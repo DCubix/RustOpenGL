@@ -91,18 +91,20 @@ impl Vec3 {
 
 	pub fn unproject(&self, viewport: Vec4, model_view: Mat4, projection: Mat4) -> Vec3 {
 		let invpv = (projection * model_view).inverted();
+
 		let w = viewport[2] - viewport[0];
 		let h = viewport[3] - viewport[1];
 		
-		let x = self.x - viewport[0];
-		let y = (h - self.y - 1.0) - viewport[1];
-		
-		invpv * Vec4::new(
-			(2.0 * x) / w - 1.0,
-			(2.0 * y) / h - 1.0,
-			2.0 * self.z - 1.0,
-			1.0
-		).to_vec3()
+		let x = (2.0 * (self.x - viewport.x) / w) - 1.0;
+		let y = -((2.0 * (self.y - viewport.y) / h) - 1.0);
+		let z = 2.0 * self.z - 1.0;
+
+		let r_cast = invpv * Vec4::new(x, y, z, 1.0);
+		Vec3::new(
+			r_cast.x / r_cast.w,
+			r_cast.y / r_cast.w,
+			r_cast.z / r_cast.w
+		)
 	}
 
 	pub fn zero() -> Vec3 { Vec3::new(0.0, 0.0, 0.0) }
@@ -190,6 +192,17 @@ impl Index<usize> for Vec4 {
 	}
 }
 
+impl IndexMut<usize> for Vec4 {
+	fn index_mut(&mut self, i: usize) -> &mut f32 {
+		match i {
+			0 => { &mut self.x },
+			1 => { &mut self.y },
+			2 => { &mut self.z },
+			_ => { &mut self.w }
+		}
+	}
+}
+
 impl Vec4 {
 	pub fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
 		Vec4 { x: x, y: y, z: z, w: w }
@@ -254,13 +267,19 @@ impl Neg for Vec4 {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Mat4 { rows: [Vec4; 4] }
 
 impl Index<usize> for Mat4 {
 	type Output = Vec4;
 	fn index(&self, i: usize) -> &Vec4 {
 		&self.rows[i]
+	}
+}
+
+impl IndexMut<usize> for Mat4 {
+	fn index_mut(&mut self, i: usize) -> &mut Vec4 {
+		&mut self.rows[i]
 	}
 }
 
@@ -325,20 +344,15 @@ impl Mat4 {
 
 	pub fn axis_angle(axis: Vec3, a: f32) -> Mat4 {
 		let (s, c) = a.sin_cos();
-		let invC = 1.0 - c;
+		let t = 1.0 - c;
+		let ax = axis.normalized();
+		let x = ax.x;
+		let y = ax.y;
+		let z = ax.z;
 		Mat4::new(&[
-			invC * axis.x * axis.x + c,
-			invC * axis.x * axis.y + s * axis.z,
-			invC * axis.x * axis.z - s * axis.y,
-			0.0,
-			invC * axis.x * axis.y - s * axis.z,
-			invC * axis.y * axis.y + c,
-			invC * axis.y * axis.z + s * axis.x,
-			0.0,
-			invC * axis.x * axis.z + s * axis.y,
-			invC * axis.y * axis.z - s * axis.x,
-			invC * axis.z * axis.z + c,
-			0.0,
+			t * x * x + c, t * x * y - z * s, t * x * z + y * s, 0.0,
+			t * x * y + z * s, t * y * y + c, t * y * z - x * s, 0.0,
+			t * x * z - y * s, t * y * z + x * s, t * z * z + c, 0.0,
 			0.0, 0.0, 0.0, 1.0
 		])
 	}
@@ -355,10 +369,7 @@ impl Mat4 {
 	pub fn uniform_scaling(s: f32) -> Mat4 { Mat4::scaling(Vec3::new(s, s, s)) }
 
 	pub fn transpose(&self) -> Mat4 {
-		let a = self.rows[0];
-		let b = self.rows[1];
-		let c = self.rows[2];
-		let d = self.rows[3];
+		let [a, b, c, d] = self.rows;
 		Mat4::new(&[
 			a.x, b.x, c.x, d.x,
 			a.y, b.y, c.y, d.y,
@@ -368,56 +379,93 @@ impl Mat4 {
 	}
 
 	pub fn inverted(&self) -> Mat4 {
-		let m = self.clone();
+		//
+		// Inversion by Cramer's rule.  Code taken from an Intel publication
+		//
+		let mut mat = self.clone();
+		let mut tmp = [0.0f32; 12];
+		let mut src = [0.0f32; 16];
 
-		let coef00 = m[2][2] * m[3][3] - m[3][2] * m[2][3];
-		let coef02 = m[1][2] * m[3][3] - m[3][2] * m[1][3];
-		let coef03 = m[1][2] * m[2][3] - m[2][2] * m[1][3];
-		let coef04 = m[2][1] * m[3][3] - m[3][1] * m[2][3];
-		let coef06 = m[1][1] * m[3][3] - m[3][1] * m[1][3];
-		let coef07 = m[1][1] * m[2][3] - m[2][1] * m[1][3];
-		let coef08 = m[2][1] * m[3][2] - m[3][1] * m[2][2];
-		let coef10 = m[1][1] * m[3][2] - m[3][1] * m[1][2];
-		let coef11 = m[1][1] * m[2][2] - m[2][1] * m[1][2];
-		let coef12 = m[2][0] * m[3][3] - m[3][0] * m[2][3];
-		let coef14 = m[1][0] * m[3][3] - m[3][0] * m[1][3];
-		let coef15 = m[1][0] * m[2][3] - m[2][0] * m[1][3];
-		let coef16 = m[2][0] * m[3][2] - m[3][0] * m[2][2];
-		let coef18 = m[1][0] * m[3][2] - m[3][0] * m[1][2];
-		let coef19 = m[1][0] * m[2][2] - m[2][0] * m[1][2];
-		let coef20 = m[2][0] * m[3][1] - m[3][0] * m[2][1];
-		let coef22 = m[1][0] * m[3][1] - m[3][0] * m[1][1];
-		let coef23 = m[1][0] * m[2][1] - m[2][0] * m[1][1];
+		// Transpose
+		for i in 0..4 {
+			src[i + 0] = self[i][0];
+			src[i + 4] = self[i][1];
+			src[i + 8] = self[i][2];
+			src[i + 12] = self[i][3];
+		}
 
-		let fac0 = Vec4::new(coef00, coef00, coef02, coef03);
-		let fac1 = Vec4::new(coef04, coef04, coef06, coef07);
-		let fac2 = Vec4::new(coef08, coef08, coef10, coef11);
-		let fac3 = Vec4::new(coef12, coef12, coef14, coef15);
-		let fac4 = Vec4::new(coef16, coef16, coef18, coef19);
-		let fac5 = Vec4::new(coef20, coef20, coef22, coef23);
+		// Calculate pairs for first 8 elements (cofactors)
+		tmp[0] = src[10] * src[15];
+		tmp[1] = src[11] * src[14];
+		tmp[2] = src[9] * src[15];
+		tmp[3] = src[11] * src[13];
+		tmp[4] = src[9] * src[14];
+		tmp[5] = src[10] * src[13];
+		tmp[6] = src[8] * src[15];
+		tmp[7] = src[11] * src[12];
+		tmp[8] = src[8] * src[14];
+		tmp[9] = src[10] * src[12];
+		tmp[10] = src[8] * src[13];
+		tmp[11] = src[9] * src[12];
 
-		let vec0 = Vec4::new(m[1][0], m[0][0], m[0][0], m[0][0]);
-		let vec1 = Vec4::new(m[1][1], m[0][1], m[0][1], m[0][1]);
-		let vec2 = Vec4::new(m[1][2], m[0][2], m[0][2], m[0][2]);
-		let vec3 = Vec4::new(m[1][3], m[0][3], m[0][3], m[0][3]);
+		// Calculate first 8 elements (cofactors)
+		mat[0][0] = tmp[0] * src[5] + tmp[3] * src[6] + tmp[4] * src[7];
+		mat[0][0] -= tmp[1] * src[5] + tmp[2] * src[6] + tmp[5] * src[7];
+		mat[0][1] = tmp[1] * src[4] + tmp[6] * src[6] + tmp[9] * src[7];
+		mat[0][1] -= tmp[0] * src[4] + tmp[7] * src[6] + tmp[8] * src[7];
+		mat[0][2] = tmp[2] * src[4] + tmp[7] * src[5] + tmp[10] * src[7];
+		mat[0][2] -= tmp[3] * src[4] + tmp[6] * src[5] + tmp[11] * src[7];
+		mat[0][3] = tmp[5] * src[4] + tmp[8] * src[5] + tmp[11] * src[6];
+		mat[0][3] -= tmp[4] * src[4] + tmp[9] * src[5] + tmp[10] * src[6];
+		mat[1][0] = tmp[1] * src[1] + tmp[2] * src[2] + tmp[5] * src[3];
+		mat[1][0] -= tmp[0] * src[1] + tmp[3] * src[2] + tmp[4] * src[3];
+		mat[1][1] = tmp[0] * src[0] + tmp[7] * src[2] + tmp[8] * src[3];
+		mat[1][1] -= tmp[1] * src[0] + tmp[6] * src[2] + tmp[9] * src[3];
+		mat[1][2] = tmp[3] * src[0] + tmp[6] * src[1] + tmp[11] * src[3];
+		mat[1][2] -= tmp[2] * src[0] + tmp[7] * src[1] + tmp[10] * src[3];
+		mat[1][3] = tmp[4] * src[0] + tmp[9] * src[1] + tmp[10] * src[2];
+		mat[1][3] -= tmp[5] * src[0] + tmp[8] * src[1] + tmp[11] * src[2];
 
-		let inv0 = vec1 * fac0 - vec2 * fac1 + vec3 * fac2;
-		let inv1 = vec0 * fac0 - vec2 * fac3 + vec3 * fac4;
-		let inv2 = vec0 * fac1 - vec1 * fac3 + vec3 * fac5;
-		let inv3 = vec0 * fac2 - vec1 * fac4 + vec2 * fac5;
+		// Calculate pairs for second 8 elements (cofactors)
+		tmp[0] = src[2] * src[7];
+		tmp[1] = src[3] * src[6];
+		tmp[2] = src[1] * src[7];
+		tmp[3] = src[3] * src[5];
+		tmp[4] = src[1] * src[6];
+		tmp[5] = src[2] * src[5];
+		tmp[6] = src[0] * src[7];
+		tmp[7] = src[3] * src[4];
+		tmp[8] = src[0] * src[6];
+		tmp[9] = src[2] * src[4];
+		tmp[10] = src[0] * src[5];
+		tmp[11] = src[1] * src[4];
 
-		let signA = Vec4::new(1.0, -1.0, 1.0, -1.0);
-		let signB = Vec4::new(-1.0, 1.0, -1.0, 1.0);
-	 	let inverse = Mat4::from_rows(inv0 * signA, inv1 * signB, inv2 * signA, inv3 * signB);
+		// Calculate second 8 elements (cofactors)
+		mat[2][0] = tmp[0] * src[13] + tmp[3] * src[14] + tmp[4] * src[15];
+		mat[2][0] -= tmp[1] * src[13] + tmp[2] * src[14] + tmp[5] * src[15];
+		mat[2][1] = tmp[1] * src[12] + tmp[6] * src[14] + tmp[9] * src[15];
+		mat[2][1] -= tmp[0] * src[12] + tmp[7] * src[14] + tmp[8] * src[15];
+		mat[2][2] = tmp[2] * src[12] + tmp[7] * src[13] + tmp[10] * src[15];
+		mat[2][2] -= tmp[3] * src[12] + tmp[6] * src[13] + tmp[11] * src[15];
+		mat[2][3] = tmp[5] * src[12] + tmp[8] * src[13] + tmp[11] * src[14];
+		mat[2][3] -= tmp[4] * src[12] + tmp[9] * src[13] + tmp[10] * src[14];
+		mat[3][0] = tmp[2] * src[10] + tmp[5] * src[11] + tmp[1] * src[9];
+		mat[3][0] -= tmp[4] * src[11] + tmp[0] * src[9] + tmp[3] * src[10];
+		mat[3][1] = tmp[8] * src[11] + tmp[0] * src[8] + tmp[7] * src[10];
+		mat[3][1] -= tmp[6] * src[10] + tmp[9] * src[11] + tmp[1] * src[8];
+		mat[3][2] = tmp[6] * src[9] + tmp[11] * src[11] + tmp[3] * src[8];
+		mat[3][2] -= tmp[10] * src[11] + tmp[2] * src[8] + tmp[7] * src[9];
+		mat[3][3] = tmp[10] * src[10] + tmp[4] * src[8] + tmp[9] * src[9];
+		mat[3][3] -= tmp[8] * src[9] + tmp[11] * src[10] + tmp[5] * src[8];
 
-		let row0 = Vec4::new(inverse[0][0], inverse[1][0], inverse[2][0], inverse[3][0]);
-
-		let dot0 = m[0] * row0;
-		let dot1 = (dot0[0] + dot0[1]) + (dot0[2] + dot0[3]);
-
-		let oneOverDeterminant = 1.0f32 / dot1;
-
-		inverse * oneOverDeterminant
+		// Calculate determinant
+		let det = 1.0f32 / (src[0] * mat[0][0] + src[1] * mat[0][1] + src[2] * mat[0][2] + src[3] * mat[0][3]);
+		for i in 0..4 {
+			for j in 0..4 {
+				mat[i][j] = mat[i][j] * det;
+			}
+		}
+		mat
 	}
 
 	pub fn ortho(l: f32, r: f32, b: f32, t: f32, n: f32, f: f32) -> Mat4 {
@@ -460,17 +508,8 @@ impl Mat4 {
 		Mat4::translation(-eye) * R
 	}
 
-	pub fn det(&self) -> f32 {
-		  self.rows[0].x * self.rows[1].y * self.rows[2].z * self.rows[3].w - self.rows[0].x * self.rows[1].y * self.rows[2].w * self.rows[3].z + self.rows[0].x * self.rows[1].z * self.rows[2].w * self.rows[3].y - self.rows[0].x * self.rows[1].z * self.rows[2].y * self.rows[3].w
-		+ self.rows[0].x * self.rows[1].w * self.rows[2].y * self.rows[3].z - self.rows[0].x * self.rows[1].w * self.rows[2].z * self.rows[3].y - self.rows[0].y * self.rows[1].z * self.rows[2].w * self.rows[3].x + self.rows[0].y * self.rows[1].z * self.rows[2].x * self.rows[3].w
-		- self.rows[0].y * self.rows[1].w * self.rows[2].x * self.rows[3].z + self.rows[0].y * self.rows[1].w * self.rows[2].z * self.rows[3].x - self.rows[0].y * self.rows[1].x * self.rows[2].z * self.rows[3].w + self.rows[0].y * self.rows[1].x * self.rows[2].w * self.rows[3].z
-		+ self.rows[0].z * self.rows[1].w * self.rows[2].x * self.rows[3].y - self.rows[0].z * self.rows[1].w * self.rows[2].y * self.rows[3].x + self.rows[0].z * self.rows[1].x * self.rows[2].y * self.rows[3].w - self.rows[0].z * self.rows[1].x * self.rows[2].w * self.rows[3].y
-		+ self.rows[0].z * self.rows[1].y * self.rows[2].w * self.rows[3].x - self.rows[0].z * self.rows[1].y * self.rows[2].x * self.rows[3].w - self.rows[0].w * self.rows[1].x * self.rows[2].y * self.rows[3].z + self.rows[0].w * self.rows[1].x * self.rows[2].z * self.rows[3].y
-		- self.rows[0].w * self.rows[1].y * self.rows[2].z * self.rows[3].x + self.rows[0].w * self.rows[1].y * self.rows[2].x * self.rows[3].z - self.rows[0].w * self.rows[1].z * self.rows[2].x * self.rows[3].y + self.rows[0].w * self.rows[1].z * self.rows[2].y * self.rows[3].x
-	}
-
 	pub fn as_ptr(&self) -> *const f32 {
-		&self.rows[0].x
+		&self.rows[0][0]
 	}
 
 }
