@@ -16,6 +16,11 @@ impl Vec2 {
 		Vec2::new(s[0], s[1])
 	}
 
+	pub fn rotate(&self, a: f32) -> Vec2 {
+		let (s, c) = a.sin_cos();
+		Vec2::new((c * self.x) - (s * self.y), (s * self.x) + (c * self.y))
+	}
+
 	pub fn extend(&self, z: f32) -> Vec3 {
 		Vec3::new(self.x, self.y, z)
 	}
@@ -33,7 +38,8 @@ impl Vec2 {
 	}
 
 	pub fn normalized(&self) -> Vec2 {
-		let len = self.length();
+		let mut len = self.length();
+		if len <= 0.0 { len = 1.0; }
 		Vec2 { x: self.x / len, y: self.y / len }
 	}
 
@@ -83,16 +89,20 @@ impl Vec3 {
 		Vec3 { x: x, y: y, z: z }
 	}
 
-	pub fn unproject(&self, viewport: Vec4, wheight: f32, invpv: Mat4) -> Vec3 {
-		let mut x = self.x;
-		let mut y = self.y;
-		x = x - viewport.x;
-		y = wheight - y - 1.0;
-		y = y - viewport.y;
-		let sx = (2.0 * x) / viewport.z - 1.0;
-		let sy = (2.0 * y) / viewport.w - 1.0;
-		let sz = 2.0 * self.z - 1.0;
-		(invpv * Vec4::new(sx, sy, sz, 1.0)).to_vec3()
+	pub fn unproject(&self, viewport: Vec4, model_view: Mat4, projection: Mat4) -> Vec3 {
+		let invpv = (projection * model_view).inverted();
+		let w = viewport[2] - viewport[0];
+		let h = viewport[3] - viewport[1];
+		
+		let x = self.x - viewport[0];
+		let y = (h - self.y - 1.0) - viewport[1];
+		
+		invpv * Vec4::new(
+			(2.0 * x) / w - 1.0,
+			(2.0 * y) / h - 1.0,
+			2.0 * self.z - 1.0,
+			1.0
+		).to_vec3()
 	}
 
 	pub fn zero() -> Vec3 { Vec3::new(0.0, 0.0, 0.0) }
@@ -431,21 +441,23 @@ impl Mat4 {
 			cot / asp, 0.0, 		0.0,			   0.0,
 				  0.0, cot,			0.0,			   0.0,
 				  0.0, 0.0,	(f + n) / d, (2.0 * f * n) / d,
-				  0.0, 0.0,		   -1.0,			   0.0
+				  0.0, 0.0,		    -1.0,			   0.0
 		])
 	}
 
 	pub fn look_at(eye: Vec3, at: Vec3, up: Vec3) -> Mat4 {
-		let z = (at - eye).normalized();
-		let x = z.cross(up).normalized();
+		let z = (eye - at).normalized();
+		let x = up.cross(z).normalized();
 		let y = z.cross(x);
 
-		Mat4::new(&[
-			 x.x,  x.y,  x.z, -eye.dot(x),
-			 y.x,  y.y,  y.z, -eye.dot(y),
-			 z.x,  z.y,  z.z, -eye.dot(z),
-			 0.0,  0.0,  0.0, 1.0
-		])
+		let R = Mat4::new(&[
+			x.x, x.y, -x.z, 0.0,
+			y.x, y.y, -y.z, 0.0,
+			z.x, z.y, -z.z, 0.0,
+			0.0, 0.0, 0.0, 1.0
+		]);
+
+		Mat4::translation(-eye) * R
 	}
 
 	pub fn det(&self) -> f32 {

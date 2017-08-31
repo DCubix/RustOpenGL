@@ -65,6 +65,12 @@ fn main() {
 					Event::Quit {..} => {
 						break 'running
 					},
+					Event::KeyDown { keycode, .. } => {
+						match keycode {
+							Some(k) => { game.on_key_press(k); },
+							None => {}
+						}
+					},
 					Event::MouseButtonDown { mouse_btn, x, y, .. } => {
 						mouse_button = mouse_btn;
 						game.on_mouse_click(mouse_btn, x as f32, y as f32);

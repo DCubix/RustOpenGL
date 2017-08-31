@@ -1,5 +1,6 @@
 #![macro_escape]
 
+extern crate tobj;
 extern crate stb_image;
 extern crate gl;
 use gl::types::*;
@@ -80,6 +81,7 @@ impl Setter<Mat4> for Uniform {
 	}
 }
 
+#[derive(Clone)]
 pub struct Shader {
 	program: u32,
 	uniforms: HashMap<String, i32>
@@ -260,6 +262,44 @@ impl VertexAttribute {
 }
 
 #[derive(Debug, Clone)]
+pub struct VertexFormat {
+	attrs: Vec<VertexAttribute>
+}
+
+impl VertexFormat {
+	pub fn new(fmt: &[VertexAttribute]) -> VertexFormat {
+		VertexFormat {
+			attrs: fmt.to_vec()
+		}
+	}
+
+	pub fn get(&self, index: usize) -> &VertexAttribute {
+		&self.attrs[index]
+	}
+
+	pub fn len(&self) -> usize {
+		self.attrs.len()
+	}
+
+	pub fn vertex_size(&self) -> usize {
+		let mut sz = 0usize;
+		for attr in self.attrs.iter().cloned() {
+			sz += attr.comps as usize * mem::size_of::<f32>();
+		}
+		sz
+	}
+
+	pub fn offset(&self, index: usize) -> usize {
+		let mut off = 0usize;
+		for i in 0..index {
+			off += self.attrs[i].comps as usize * mem::size_of::<f32>();
+		}
+		off
+	}
+
+}
+
+#[derive(Debug, Clone)]
 pub struct Model {
 	vertices: Vec<f32>,
 	indices: Vec<u16>,
@@ -271,7 +311,7 @@ pub struct Model {
 }
 
 impl Model {
-	pub fn new(fmt: &[VertexAttribute]) -> Model {
+	pub fn new(fmt: VertexFormat) -> Model {
 		let mut vao = 0;
 		let mut vbo = 0;
 		let mut ibo = 0;
@@ -282,23 +322,18 @@ impl Model {
 		GL!(BindVertexArray(vao));
 		GL!(BindBuffer(gl::ARRAY_BUFFER, vbo));
 
-		let mut stride = 0;
-		for attr in fmt.iter().cloned() {
-			stride += attr.comps * 4;
-		}
-		
-		let mut off = 0i32;
-		for (i, attr) in fmt.iter().cloned().enumerate() {
+		let stride = fmt.vertex_size();
+
+		for i in 0..fmt.len() {
 			GL!(EnableVertexAttribArray(i as u32));
 			GL!(VertexAttribPointer(
 				i as u32,
-				attr.comps,
+				fmt.get(i).comps,
 				gl::FLOAT,
-				if attr.norm { gl::TRUE } else { gl::FALSE },
-				stride,
-				off as *const _
+				if fmt.get(i).norm { gl::TRUE } else { gl::FALSE },
+				stride as i32,
+				fmt.offset(i) as *const _
 			));
-			off += attr.comps * mem::size_of::<f32>() as i32;
 		}
 
 		GL!(BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo));
@@ -316,29 +351,79 @@ impl Model {
 		}
 	}
 
-	pub fn from(vertices: &[f32], indices: &[u16], fmt: &[VertexAttribute]) -> Model {
+	pub fn from_file(path: &Path, flip_uv: bool) -> Option<Model> {
+		let ob = tobj::load_obj(path);
+		if !ob.is_ok() { return None; }
+
+		let (models, _) = ob.unwrap();
+		if models.len() == 0 { return None; }
+
+		let mut verts: Vec<f32> = Vec::new();
+		let mut inds: Vec<u16> = Vec::new();
+		let fmt = [
+			VertexAttribute::new(3, false),
+			VertexAttribute::new(3, false),
+			VertexAttribute::new(2, false),
+		];
+		
+		for (j, m) in models.iter().enumerate() {
+			let mesh = &m.mesh;
+			// println!("INDICES: {}", mesh.indices.len());
+			// println!("TRIANGLES: {}", mesh.indices.len()/3);
+			// println!("VERTICES: {}", mesh.positions.len()/3);
+			for f in 0..mesh.indices.len()/3 {
+				let face = f * 3;
+				let is = [
+					mesh.indices[face] as u16,
+					mesh.indices[face + 1] as u16,
+					mesh.indices[face + 2] as u16,
+				];
+
+				for k in 0..is.len() {
+					let v = is[k] as usize;
+					verts.push(mesh.positions[v * 3]);
+					verts.push(mesh.positions[v * 3 + 1]);
+					verts.push(mesh.positions[v * 3 + 2]);
+					if !mesh.normals.is_empty() {
+						verts.push(mesh.normals[v * 3]);
+						verts.push(mesh.normals[v * 3 + 1]);
+						verts.push(mesh.normals[v * 3 + 2]);
+					} else {
+						verts.push(0.0);
+						verts.push(0.0);
+						verts.push(0.0);
+					}
+					if !mesh.texcoords.is_empty() {
+						verts.push(mesh.texcoords[v * 2]);
+						if !flip_uv {
+							verts.push(mesh.texcoords[v * 2 + 1]);
+						} else {
+							verts.push(1.0 - mesh.texcoords[v * 2 + 1]);
+						}
+					} else {
+						verts.push(0.0);
+						verts.push(0.0);
+					}
+					inds.push(is[k] * 3);
+					inds.push(is[k] * 3 + 1);
+					inds.push(is[k] * 3 + 2);
+				}
+			}
+		}
+
+		Some(Model::from(verts.as_slice(), inds.as_slice(), VertexFormat::new(&fmt)))
+	}
+
+	pub fn from(vertices: &[f32], indices: &[u16], fmt: VertexFormat) -> Model {
 		let mut m = Model::new(fmt);
 		m.add_data(vertices, indices);
 		m.flush();
 		m
 	}
 
-	pub fn concat(a: Model, b: Model, fmt: &[VertexAttribute]) -> Model {
-		let mut m = Model::new(fmt);
-		let mut verts = Vec::new();
-		let mut inds = Vec::new();
-		verts.extend(a.vertices.clone());
-		verts.extend(b.vertices.clone());
-		inds.extend(a.indices.clone());
-		inds.extend(b.indices.clone());
-		m.add_data(verts.as_slice(), inds.as_slice());
-		m.flush();
-		m
-	}
-
 	pub fn add_data(&mut self, vertices: &[f32], indices: &[u16]) {
-		self.vertices.extend(vertices.to_vec());
-		self.indices.extend(indices.to_vec());
+		self.vertices.extend(vertices);
+		self.indices.extend(indices);
 	}
 
 	pub fn flush(&mut self) {
